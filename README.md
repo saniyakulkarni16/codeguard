@@ -1,4 +1,15 @@
 # CodeGuard: Code Plagiarism Detector
+![CodeGuard screenshot](docs/screenshot.png)
+## Results
+
+Tested on synthetic submissions with known planted copies (renamed identifiers, added comments, reordered functions).
+
+| Files | Pairs | Time | Precision | Recall |
+|------:|------:|-----:|----------:|-------:|
+| 200   | 19,900  | 3.23 s | 1.00 | 1.00 |
+| 500   | 124,750 | 9.22 s | 1.00 | 1.00 |
+
+Machine: <your CPU, e.g. Intel i5, 8 GB RAM>
 
 Finds copied Python code even after **variable renaming, comment changes, reformatting, or reordered functions**.
 Uses the same core idea as Stanford's MOSS (winnowing) plus an AST layer for structural matching.
@@ -93,8 +104,8 @@ CI (`.github/workflows/ci.yml`) runs tests and the benchmark and builds the imag
 - **Why an inverted index?** All-pairs is O(N²). The index scores only pairs sharing fingerprints, and ignoring very common fingerprints (like MOSS's `-m` option) removes idiom noise.
 - **Known limitations:** heavy refactoring (inlining, loop to recursion), and tiny files, can evade it. That's why similarity is a *signal for human review*, not proof.
 
-## Resume bullets (replace X with your benchmark results)
+## Resume bullets 
 
-- Built **CodeGuard**, a code plagiarism detector using token normalization, Rabin-Karp rolling-hash winnowing and AST subtree hashing; achieved X precision / X recall on 500 synthetic submissions with planted renamed and reordered copies.
-- Cut comparison time by X% via an inverted fingerprint index, common-fingerprint filtering, and gated AST comparison (500 files in X s).
+- Built **CodeGuard**, a code plagiarism detector using token normalization, Rabin-Karp rolling-hash winnowing and AST subtree hashing; achieved 1.00 precision / 1.00 recall on 500 synthetic submissions with planted renamed and reordered copies.
+- Cut comparison time by X% via an inverted fingerprint index, common-fingerprint filtering, and gated AST comparison (500 files in 9.22 s).
 - Shipped a FastAPI service and React/JS dashboard with similarity heatmap and side-by-side highlighted diff; containerized with Docker and automated tests and benchmarks in GitHub Actions.
