@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeGuard</title>
+<style>
+  :root { --bg:#fff; --fg:#1b1f24; --muted:#6a737d; --line:#d8dee4; --card:#f6f8fa; --hl:#fff3b0; --accent:#1f6feb; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0d1117; --fg:#e6edf3; --muted:#8b949e; --line:#30363d; --card:#161b22; --hl:#5a4a00; --accent:#58a6ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  main { max-width:1100px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { margin:0 0 4px; } h2 { margin:28px 0 8px; font-size:18px; }
+  .muted { color:var(--muted); }
+  form { display:flex; flex-wrap:wrap; gap:12px; align-items:end; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; margin-top:16px; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); }
+  button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:9px 18px; font-size:14px; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:wait; }
+  .scroll { overflow-x:auto; }
+  table { border-collapse:collapse; font-size:13px; }
+  th, td { border:1px solid var(--line); padding:4px 8px; text-align:center; white-space:nowrap; }
+  td.cell { cursor:pointer; min-width:48px; }
+  tr.pair { cursor:pointer; } tr.pair:hover { background:var(--card); }
+  .badge { padding:1px 8px; border-radius:10px; font-size:12px; color:#fff; }
+  .high { background:#d1242f; } .medium { background:#bf8700; } .low { background:#2da44e; }
+  .diff { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .pane { border:1px solid var(--line); border-radius:8px; overflow:hidden; min-width:0; }
+  .pane h3 { margin:0; padding:8px 12px; font-size:13px; background:var(--card); border-bottom:1px solid var(--line); }
+  .code { margin:0; overflow:auto; max-height:520px; font:12.5px/1.5 ui-monospace,monospace; }
+  .ln { display:flex; } .ln span:first-child { width:40px; flex:none; text-align:right; padding-right:8px; color:var(--muted); user-select:none; }
+  .ln span:last-child { white-space:pre; padding-right:12px; }
+  .ln.match { background:var(--hl); }
+  #err { color:#d1242f; margin-top:12px; }
+  @media (max-width:760px) { .diff { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>CodeGuard</h1>
+  <div class="muted">Detects copied Python code even after renaming, reformatting or reordering.</div>
+
+  <form id="form">
+    <label>Submissions (.py files or one .zip)
+      <input type="file" id="files" multiple accept=".py,.zip" required></label>
+    <label>Starter code to ignore (optional)
+      <input type="file" id="template" accept=".py"></label>
+    <label>Min score to report
+      <input type="number" id="min" value="0.2" min="0" max="1" step="0.05"></label>
+    <button id="go" type="submit">Analyze</button>
+  </form>
+  <div id="err"></div>
+  <div id="out"></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const el = (tag, props = {}, ...kids) => {
+  const n = Object.assign(document.createElement(tag), props);
+  kids.forEach((k) => n.append(k));
+  return n;
+};
+const color = (s) => `hsl(${Math.round(120 - 120 * s)}, 70%, 70%)`; // green (low) -> red (high)
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("err").textContent = ""; $("out").replaceChildren();
+  const fd = new FormData();
+  [...$("files").files].forEach((f) => fd.append("files", f));
+  if ($("template").files[0]) fd.append("template", $("template").files[0]);
+  fd.append("min_score", $("min").value);
+  $("go").disabled = true;
+  try {
+    const res = await fetch("/api/compare", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Request failed");
+    render(data);
+  } catch (err) { $("err").textContent = err.message; }
+  finally { $("go").disabled = false; }
+});
+
+function render(d) {
+  const out = $("out");
+  out.append(el("p", { className: "muted" },
+    `${d.names.length} files · scored ${d.compared} of ${d.total_pairs} pairs (inverted index skipped the rest)`));
+
+  out.append(el("h2", {}, "Flagged pairs"));
+  const body = el("tbody");
+  d.pairs.forEach((p) => body.append(
+    el("tr", { className: "pair", onclick: () => showDiff(d, p) },
+      el("td", {}, el("span", { className: `badge ${p.verdict}` }, p.verdict)),
+      el("td", {}, (p.score * 100).toFixed(0) + "%"),
+      el("td", {}, p.token_score.toFixed(2)),
+      el("td", {}, p.ast_score === null ? "–" : p.ast_score.toFixed(2)),
+      el("td", {}, p.file_a), el("td", {}, p.file_b))));
+  if (!d.pairs.length) out.append(el("p", {}, "No pairs above the threshold."));
+  else out.append(el("div", { className: "scroll" }, el("table", {},
+    el("thead", {}, el("tr", {}, ...["Verdict", "Score", "Token", "AST", "File A", "File B"].map((h) => el("th", {}, h)))),
+    body)));
+
+  out.append(el("h2", {}, "Similarity matrix"), matrix(d));
+  out.append(el("div", { id: "diff" }));
+  if (d.pairs[0]) showDiff(d, d.pairs[0], false);
+}
+
+function matrix(d) {
+  const head = el("tr", {}, el("th"), ...d.names.map((n, i) => el("th", { title: n }, i + 1)));
+  const rows = d.names.map((n, i) => el("tr", {}, el("th", { title: n }, `${i + 1}. ${n}`),
+    ...d.matrix[i].map((s, j) => {
+      const td = el("td", { className: "cell", title: `${d.names[i]} vs ${d.names[j]}: ${s}` }, s.toFixed(2));
+      td.style.background = i === j ? "transparent" : color(s);
+      td.style.color = "#000";
+      const pair = d.pairs.find((p) => (p.file_a === d.names[i] && p.file_b === d.names[j]) ||
+                                       (p.file_a === d.names[j] && p.file_b === d.names[i]));
+      if (i !== j && pair) td.onclick = () => showDiff(d, pair);
+      return td;
+    })));
+  return el("div", { className: "scroll" }, el("table", {}, el("thead", {}, head), el("tbody", {}, ...rows)));
+}
+
+function pane(title, source, regions) {
+  const hit = new Set();
+  regions.forEach(([a, b]) => { for (let l = a; l <= b; l++) hit.add(l); });
+  const code = el("pre", { className: "code" });
+  source.split("\n").forEach((line, i) => code.append(
+    el("div", { className: "ln" + (hit.has(i + 1) ? " match" : "") },
+      el("span", {}, i + 1), el("span", {}, line))));   // textContent only: no HTML injection
+  return el("div", { className: "pane" }, el("h3", {}, title), code);
+}
+
+function showDiff(d, p, scroll = true) {
+  const box = $("diff");
+  box.replaceChildren(
+    el("h2", {}, `Side by side: ${(p.score * 100).toFixed(0)}% similar`),
+    el("div", { className: "diff" },
+      pane(p.file_a, d.sources[p.file_a], p.regions_a),
+      pane(p.file_b, d.sources[p.file_b], p.regions_b)));
+  if (scroll) box.scrollIntoView({ behavior: "smooth" });
+}
+</script>
+</body>
+</html>
