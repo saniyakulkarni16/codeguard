@@ -10,13 +10,18 @@
     :root { --bg:#0d1117; --fg:#e6edf3; --muted:#8b949e; --line:#30363d; --card:#161b22; --hl:#5a4a00; --accent:#58a6ff; }
   }
   * { box-sizing: border-box; }
+  [hidden] { display:none !important; }
   body { margin:0; font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--fg); }
   main { max-width:1100px; margin:0 auto; padding:24px 16px 64px; }
+  header { display:flex; justify-content:space-between; align-items:center; gap:12px; }
   h1 { margin:0 0 4px; } h2 { margin:28px 0 8px; font-size:18px; }
   .muted { color:var(--muted); }
   form { display:flex; flex-wrap:wrap; gap:12px; align-items:end; background:var(--card); border:1px solid var(--line); border-radius:8px; padding:16px; margin-top:16px; }
   label { display:flex; flex-direction:column; gap:4px; font-size:13px; color:var(--muted); }
+  input[type=email], input[type=password], input[type=number] { padding:7px 9px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); min-width:220px; }
   button { background:var(--accent); color:#fff; border:0; border-radius:6px; padding:9px 18px; font-size:14px; cursor:pointer; }
+  button.secondary { background:transparent; color:var(--accent); border:1px solid var(--line); }
+  button.small { padding:3px 10px; font-size:12px; }
   button:disabled { opacity:.5; cursor:wait; }
   .scroll { overflow-x:auto; }
   table { border-collapse:collapse; font-size:13px; }
@@ -25,6 +30,7 @@
   tr.pair { cursor:pointer; } tr.pair:hover { background:var(--card); }
   .badge { padding:1px 8px; border-radius:10px; font-size:12px; color:#fff; }
   .high { background:#d1242f; } .medium { background:#bf8700; } .low { background:#2da44e; }
+  .st-done { background:#2da44e; } .st-failed { background:#d1242f; } .st-pending, .st-running { background:#6a737d; }
   .diff { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
   .pane { border:1px solid var(--line); border-radius:8px; overflow:hidden; min-width:0; }
   .pane h3 { margin:0; padding:8px 12px; font-size:13px; background:var(--card); border-bottom:1px solid var(--line); }
@@ -32,26 +38,46 @@
   .ln { display:flex; } .ln span:first-child { width:40px; flex:none; text-align:right; padding-right:8px; color:var(--muted); user-select:none; }
   .ln span:last-child { white-space:pre; padding-right:12px; }
   .ln.match { background:var(--hl); }
-  #err { color:#d1242f; margin-top:12px; }
+  .msg { margin-top:12px; } .err { color:#d1242f; }
   @media (max-width:760px) { .diff { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
 <main>
-  <h1>CodeGuard</h1>
-  <div class="muted">Detects copied Python code even after renaming, reformatting or reordering.</div>
+  <header>
+    <div>
+      <h1>CodeGuard</h1>
+      <div class="muted">Detects copied Python code even after renaming, reformatting or reordering.</div>
+    </div>
+    <div id="who" hidden><span id="email" class="muted"></span> <button class="secondary small" id="logout">Log out</button></div>
+  </header>
 
-  <form id="form">
-    <label>Submissions (.py files or one .zip)
-      <input type="file" id="files" multiple accept=".py,.zip" required></label>
-    <label>Starter code to ignore (optional)
-      <input type="file" id="template" accept=".py"></label>
-    <label>Min score to report
-      <input type="number" id="min" value="0.2" min="0" max="1" step="0.05"></label>
-    <button id="go" type="submit">Analyze</button>
-  </form>
-  <div id="err"></div>
-  <div id="out"></div>
+  <section id="auth">
+    <form id="authForm">
+      <label>Email <input type="email" id="authEmail" required autocomplete="username"></label>
+      <label>Password (min 8 characters) <input type="password" id="authPw" required minlength="8" autocomplete="current-password"></label>
+      <button type="submit" id="loginBtn">Log in</button>
+      <button type="button" class="secondary" id="registerBtn">Create account</button>
+    </form>
+  </section>
+
+  <section id="app" hidden>
+    <form id="form">
+      <label>Submissions (.py files or one .zip)
+        <input type="file" id="files" multiple accept=".py,.zip" required></label>
+      <label>Starter code to ignore (optional)
+        <input type="file" id="template" accept=".py"></label>
+      <label>Min score to report
+        <input type="number" id="min" value="0.2" min="0" max="1" step="0.05"></label>
+      <button id="go" type="submit">Analyze</button>
+    </form>
+
+    <h2>History</h2>
+    <div id="history" class="scroll"></div>
+    <div id="out"></div>
+  </section>
+
+  <div id="msg" class="msg"></div>
 </main>
 
 <script>
@@ -62,28 +88,121 @@ const el = (tag, props = {}, ...kids) => {
   return n;
 };
 const color = (s) => `hsl(${Math.round(120 - 120 * s)}, 70%, 70%)`; // green (low) -> red (high)
+const say = (text, isErr = false) => { const m = $("msg"); m.textContent = text; m.className = "msg" + (isErr ? " err" : " muted"); };
 
+/* ---------- auth + API helper ---------- */
+const TOKEN_KEY = "cg_token";
+let token = localStorage.getItem(TOKEN_KEY);
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers, token ? { Authorization: `Bearer ${token}` } : {});
+  const res = await fetch(path, opts);
+  if (res.status === 401 && token) { logout(); throw new Error("Session expired. Please log in again."); }
+  if (res.status === 204) return null;
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const d = data.detail;
+    throw new Error(Array.isArray(d) ? d.map((x) => x.msg).join("; ") : d || "Request failed");
+  }
+  return data;
+}
+
+async function login(email, password) {
+  const data = await api("/api/auth/login", { method: "POST", body: new URLSearchParams({ username: email, password }) });
+  token = data.access_token;
+  localStorage.setItem(TOKEN_KEY, token);
+  await enterApp();
+}
+
+function logout() {
+  token = null;
+  localStorage.removeItem(TOKEN_KEY);
+  $("auth").hidden = false; $("app").hidden = true; $("who").hidden = true;
+  $("out").replaceChildren(); $("history").replaceChildren();
+}
+
+async function enterApp() {
+  const me = await api("/api/auth/me");
+  $("email").textContent = me.email;
+  $("auth").hidden = true; $("app").hidden = false; $("who").hidden = false;
+  say("");
+  await loadHistory();
+}
+
+$("authForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  try { await login($("authEmail").value, $("authPw").value); $("authPw").value = ""; }
+  catch (err) { say(err.message, true); }
+});
+$("registerBtn").addEventListener("click", async () => {
+  if (!$("authForm").reportValidity()) return;
+  try {
+    await api("/api/auth/register", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: $("authEmail").value, password: $("authPw").value }) });
+    await login($("authEmail").value, $("authPw").value);
+    $("authPw").value = "";
+  } catch (err) { say(err.message, true); }
+});
+$("logout").addEventListener("click", logout);
+
+/* ---------- jobs ---------- */
 $("form").addEventListener("submit", async (e) => {
   e.preventDefault();
-  $("err").textContent = ""; $("out").replaceChildren();
+  $("out").replaceChildren(); say("");
   const fd = new FormData();
   [...$("files").files].forEach((f) => fd.append("files", f));
   if ($("template").files[0]) fd.append("template", $("template").files[0]);
   fd.append("min_score", $("min").value);
   $("go").disabled = true;
   try {
-    const res = await fetch("/api/compare", { method: "POST", body: fd });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.detail || "Request failed");
-    render(data);
-  } catch (err) { $("err").textContent = err.message; }
+    const { id } = await api("/api/jobs", { method: "POST", body: fd });
+    await loadHistory();
+    await watch(id);
+  } catch (err) { say(err.message, true); }
   finally { $("go").disabled = false; }
 });
 
+async function watch(id) {
+  say("Analyzing…");
+  for (;;) {                                   // poll until the background worker finishes
+    const job = await api(`/api/jobs/${id}`);
+    if (job.status === "done") { say(""); showJob(job); loadHistory(); return; }
+    if (job.status === "failed") { loadHistory(); throw new Error(job.error || "Analysis failed"); }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
+function showJob(job) {
+  $("out").replaceChildren();
+  render({ ...job.report, sources: job.sources });
+  $("out").scrollIntoView({ behavior: "smooth" });
+}
+
+async function loadHistory() {
+  const jobs = await api("/api/jobs");
+  const box = $("history");
+  if (!jobs.length) { box.replaceChildren(el("p", { className: "muted" }, "No analyses yet.")); return; }
+  const rows = jobs.map((j) => el("tr", {},
+    el("td", {}, new Date(j.created_at).toLocaleString()),
+    el("td", {}, String(j.file_count)),
+    el("td", {}, el("span", { className: `badge st-${j.status}` }, j.status)),
+    el("td", {}, j.max_score == null ? "–" : (j.max_score * 100).toFixed(0) + "%"),
+    el("td", {},
+      el("button", { className: "secondary small", disabled: j.status !== "done",
+        onclick: async () => { try { showJob(await api(`/api/jobs/${j.id}`)); } catch (e) { say(e.message, true); } } }, "Open"),
+      " ",
+      el("button", { className: "secondary small",
+        onclick: async () => { try { await api(`/api/jobs/${j.id}`, { method: "DELETE" }); await loadHistory(); } catch (e) { say(e.message, true); } } }, "Delete"))));
+  box.replaceChildren(el("table", {},
+    el("thead", {}, el("tr", {}, ...["Date", "Files", "Status", "Top match", ""].map((h) => el("th", {}, h)))),
+    el("tbody", {}, ...rows)));
+}
+
+/* ---------- report rendering ---------- */
 function render(d) {
   const out = $("out");
   out.append(el("p", { className: "muted" },
-    `${d.names.length} files · scored ${d.compared} of ${d.total_pairs} pairs (inverted index skipped the rest)`));
+    `${d.names.length} files · scored ${d.compared} of ${d.total_pairs} pairs (the inverted index skips pairs with no shared fingerprints)`));
 
   out.append(el("h2", {}, "Flagged pairs"));
   const body = el("tbody");
@@ -110,7 +229,7 @@ function matrix(d) {
     ...d.matrix[i].map((s, j) => {
       const td = el("td", { className: "cell", title: `${d.names[i]} vs ${d.names[j]}: ${s}` }, s.toFixed(2));
       td.style.background = i === j ? "transparent" : color(s);
-      td.style.color = "#000";
+      td.style.color = i === j ? "inherit" : "#000";
       const pair = d.pairs.find((p) => (p.file_a === d.names[i] && p.file_b === d.names[j]) ||
                                        (p.file_a === d.names[j] && p.file_b === d.names[i]));
       if (i !== j && pair) td.onclick = () => showDiff(d, pair);
@@ -138,6 +257,9 @@ function showDiff(d, p, scroll = true) {
       pane(p.file_b, d.sources[p.file_b], p.regions_b)));
   if (scroll) box.scrollIntoView({ behavior: "smooth" });
 }
+
+/* ---------- startup: reuse a saved token if it is still valid ---------- */
+if (token) enterApp().catch(() => logout());
 </script>
 </body>
 </html>

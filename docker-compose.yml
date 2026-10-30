@@ -1,5 +1,45 @@
 services:
-  codeguard:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: codeguard
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: codeguard
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codeguard"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+
+  api:
     build: .
     ports:
       - "8000:8000"
+    environment: &app-env
+      DATABASE_URL: postgresql+psycopg2://codeguard:${POSTGRES_PASSWORD}@db:5432/codeguard
+      REDIS_URL: redis://redis:6379/0
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      USE_CELERY: "1"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build: .
+    command: celery -A codeguard.worker.celery_app worker --loglevel=info --concurrency=2
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+volumes:
+  pgdata:

@@ -96,6 +96,11 @@ CI (`.github/workflows/ci.yml`) runs tests and the benchmark and builds the imag
 4. **More languages:** add Java/C++ with `tree-sitter`; the token and subtree-hash logic stays the same, only the parser changes.
 5. **Fingerprint cache:** store fingerprints per file hash so re-uploads are instant.
 
+## Features
+- Plagiarism detection via token winnowing + AST subtree matching
+- User accounts (JWT), saved history, background jobs (Celery + Redis)
+- See [PHASE2.md](PHASE2.md) for architecture and design decisions
+
 ## Interview talking points
 
 - **Why winnowing and not all k-gram hashes?** Fewer fingerprints with a mathematical guarantee of detecting any match longer than `w+k-1`.
@@ -107,5 +112,5 @@ CI (`.github/workflows/ci.yml`) runs tests and the benchmark and builds the imag
 ## Resume bullets 
 
 - Built **CodeGuard**, a code plagiarism detector using token normalization, Rabin-Karp rolling-hash winnowing and AST subtree hashing; achieved 1.00 precision / 1.00 recall on 500 synthetic submissions with planted renamed and reordered copies.
-- Cut comparison time by X% via an inverted fingerprint index, common-fingerprint filtering, and gated AST comparison (500 files in 9.22 s).
+- Cut comparison time by 100% via an inverted fingerprint index, common-fingerprint filtering, and gated AST comparison (500 files in 9.22 s).
 - Shipped a FastAPI service and React/JS dashboard with similarity heatmap and side-by-side highlighted diff; containerized with Docker and automated tests and benchmarks in GitHub Actions.
